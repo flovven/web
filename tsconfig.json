@@ -1,0 +1,10 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./packages/core" },
+    { "path": "./packages/adapter-hono" },
+    { "path": "./packages/adapter-fastify" },
+    { "path": "./packages/adapter-elysia" },
+    { "path": "./packages/adapter-koa" }
+  ]
+}

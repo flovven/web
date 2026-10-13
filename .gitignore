@@ -1,0 +1,23 @@
+# 依赖
+node_modules/
+.pnp
+.pnp.js
+
+# 构建产物
+dist/
+*.tsbuildinfo
+
+# 日志
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# 编辑器
+.vscode/
+.idea/
+.DS_Store
+
+# 环境与密钥
+.env
+.env.*
+*.pem

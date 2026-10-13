@@ -1,0 +1,23 @@
+{
+  "name": "@gyre/web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "gyre 统一 Web 框架垫片层：TypeScript 实现，适配 hono / fastify / elysia / koa2",
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "tsc -b --pretty false",
+    "clean": "node -e \"require('fs').rmSync('packages/core/dist',{recursive:true,force:true}); ['adapter-hono','adapter-fastify','adapter-elysia','adapter-koa'].forEach(n=>require('fs').rmSync('packages/'+n+'/dist',{recursive:true,force:true}))\"",
+    "test": "npm run test --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5",
+    "@types/node": "^20.12.7"
+  }
+}
