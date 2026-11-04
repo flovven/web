@@ -1,0 +1,173 @@
+= @flovven/web
+
+Node.js 统一 Web 垫片层工作区：一次编写业务代码，自由切换 hono / fastify / elysia / koa2。
+
+`@flovven/web` 是 flovven（Node.js 版 bufgot / ferrite 生态）的 Web 层工作区，
+定位与 Go 版 `bufgot/web` 一致：在业务代码与具体 Web 框架之间加一层薄适配垫片，
+把路由、中间件、上下文以统一抽象暴露，底层框架可随时替换。
+工作区同时包含服务端垫片（core + adapters）与声明式 HTTP 客户端（client）。
+
+== 工作区构成
+
+本仓库是 npm workspaces 单体仓，四个能力面各自独立发包：
+
+[options="header"]
+|===
+| 目录 | 包名 | 职责
+
+| `core/` | `@flovven/web-core` | 统一抽象：`WebApp` / `WebContext` / `WebMiddleware` / `WebAdapter` / 路由与基础类型，零运行时依赖
+| `packages/adapter-hono/` | `@flovven/web-adapter-hono` | `HonoAdapter`，框架名 `hono`
+| `packages/adapter-fastify/` | `@flovven/web-adapter-fastify` | `FastifyAdapter`，框架名 `fastify`
+| `packages/adapter-elysia/` | `@flovven/web-adapter-elysia` | `ElysiaAdapter`，框架名 `elysia`
+| `packages/adapter-koa/` | `@flovven/web-adapter-koa` | `KoaAdapter`，框架名 `koa2`
+| `client/` | `@flovven/web-client` | Feign 风格声明式 HTTP 客户端：接口代理、负载均衡、编解码、签名/验签
+|===
+
+== 设计要点
+
+* 薄适配：适配器只需实现 `create` / `registerRoute` / `useMiddleware` / `listen` 四项，`toContext` 按需可选，避免抽象过度而变成「又一个框架」
+* 上下文一致性：`WebContext` 以 Web 标准（`Headers`、`URL` 语义）建模，hono / elysia 天然对齐，fastify / koa2 由适配器包装
+* 洋葱模型：中间件签名统一为 `(ctx, next) => Promise<void>`，不调用 `next()` 即短路（可作守卫 / 鉴权）
+* 响应阶段钩子：`WebMiddleware.responseStage` 为 fastify（`onSend`）、elysia（`onAfterHandle`）这类无法在洋葱回卷时读响应体的框架提供单独执行点
+* 原生能力透传：`AdapterOptions` 透传框架原生配置，需要框架特有能力时可通过适配器暴露的原生 app 直连，垫片层不设限
+* 框架依赖以 `peerDependencies` 声明且标记 optional，未安装某框架不影响其他适配器
+
+== 核心抽象
+
+[options="header"]
+|===
+| 导出 | 说明
+
+| `WebApp` | 业务门面：`use()` 注册全局中间件，`route()` / `get()` / `post()` / `put()` / `patch()` / `delete()` 注册路由（链式返回 this），`build()` 惰性构建原生 app，`listen()` 启动，`adapterName` 暴露当前适配器名
+| `WebContext` | 请求/响应统一视图：`request`（method / url / path / headers / query / params / body() / rawBody?）、`response`（statusCode / headers / body）、`setStatus()` / `setHeader()` / `json()` / `text()` / `html()` / `send()`
+| `WebMiddleware` | `(ctx, next)`，可选 `responseStage` 钩子
+| `WebRoute` / `WebRouter` | 路由描述（method / path / handler / middlewares）与注册接口
+| `WebAdapter` | 框架适配器接口：`name`、`create`、`registerRoute`、`useMiddleware`、`listen`、可选 `toContext`
+| `HttpMethod` | `GET` / `POST` / `PUT` / `PATCH` / `DELETE` / `HEAD` / `OPTIONS` / `ALL`
+| `ListenOptions` | `port`、`host?`、`onListen?`
+|===
+
+`WebContext.request.rawBody()` 的可用性由适配器能力决定：hono / elysia 原生支持，
+fastify 经 `preParsing` 预读，koa2 依赖 `koa-bodyparser` 的 `rawBody`；能力缺失时返回 `undefined`。
+验签等需要原始字节语义的场景必须依赖该字段。
+
+== 中间件与签名闭环
+
+`@flovven/web-core` 内置 sign 中间件，与 `@flovven/web-client` 的签名传输算法完全对齐：
+
+[options="header"]
+|===
+| 导出 | 说明
+
+| `verifySign(opts)` | 校验请求头 `x-req-app` / `x-req-timestamp` / `x-req-nonce` / `x-req-sign`；`mode` 支持 `required`（默认）与 `optional`；`windowSec` 默认 300 秒有效期；失败默认返回 401，可用 `onFail` 自定义
+| `signResponse(opts)` | 在 `next()` 之后为响应追加 `x-res-app` / `x-res-timestamp` / `x-res-nonce` / `x-res-sign`，同时暴露 `responseStage` 钩子；`skip(ctx)` 可跳过静态资源等路径
+| `signPayload` / `verifyPayload` | 底层签名与验签（常量时间比较），支持 `md5` / `hmac-sha256` / `ed25519`
+|===
+
+签名载荷：
+
+[source,text]
+----
+payload(request)  = app + ts + nonce + UPPER(method) + path + base64(body)
+payload(response) = app + ts + nonce + statusCode + base64(body)
+其中 path = pathname + search
+----
+
+`ed25519` 时：服务端校验用公钥，响应签名用私钥；`md5` / `hmac-sha256` 使用共享盐。
+
+服务端示例：
+
+[source,ts]
+----
+import { WebApp } from '@flovven/web-core';
+import { HonoAdapter } from '@flovven/web-adapter-hono';
+import { verifySign, signResponse } from '@flovven/web-core/middleware/sign';
+
+const app = new WebApp(new HonoAdapter());
+
+app.use(verifySign({ app: 'my-app', method: 'hmac-sha256', salt: 's3cret' }));
+app.use(signResponse({ app: 'my-app', method: 'hmac-sha256', salt: 's3cret' }));
+
+app.get('/ping', async (ctx) => {
+  await ctx.json({ ok: true });
+});
+
+await app.listen({ port: 3000 });
+----
+
+== 声明式客户端
+
+`@flovven/web-client` 详见 link:client/README.adoc[client 文档]，要点：
+
+* `createClient<T>(options)`：按 `mappings` 把接口方法映射为 `"METHOD /path"` 或 `{ method, path, meta? }`
+* 服务发现模式（`serviceName` + `discoverer`）或直连模式（`baseUrl`）
+* 内置负载均衡：`RoundRobin`（默认）/ `FirstBalancer` / `RandomBalancer` / `WeightedRandom`
+* 编解码：`JSONCodec`（默认）/ `TextCodec` / `BytesCodec`，可自定义 `Codec`
+* 传输中间件：`createSignTransport`（请求签名）、`createResponseVerifyTransport`（响应验签），可叠加
+* 非 2xx 抛 `HTTPError`（含 statusCode / headers / body），`decodeError` 可自定义错误解码
+
+== 安装
+
+[source,bash]
+----
+# 服务端：统一抽象 + 任选一个适配器
+npm i @flovven/web-core @flovven/web-adapter-hono hono
+
+# 客户端
+npm i @flovven/web-client
+----
+
+== 快速开始
+
+[source,ts]
+----
+import { WebApp } from '@flovven/web-core';
+import { HonoAdapter } from '@flovven/web-adapter-hono';
+
+const app = new WebApp(new HonoAdapter());
+
+app.use(async (ctx, next) => {
+  console.log(`${ctx.request.method} ${ctx.request.path}`);
+  await next();
+});
+
+app.get('/users/:id', async (ctx) => {
+  await ctx.json({ id: ctx.request.params.id });
+});
+
+await app.listen({ port: 3000, onListen: ({ port }) => console.log(`listening on ${port}`) });
+
+// 切换框架：把 HonoAdapter 换成 FastifyAdapter / ElysiaAdapter / KoaAdapter 即可，业务代码零改动
+----
+
+== 工作区脚本
+
+仓库根目录（npm workspaces）：
+
+[source,bash]
+----
+npm install          # 安装全部工作区依赖
+npm run build        # npm run build --workspaces --if-present
+npm run typecheck    # tsc -b --pretty false
+npm run test         # npm run test --workspaces --if-present
+npm run clean        # 清理各包 dist/
+----
+
+子包脚本：
+
+[source,bash]
+----
+# core / adapters：build、typecheck
+npm run build -w @flovven/web-core
+npm run typecheck -w @flovven/web-core
+
+# client：build、typecheck、test（构建后跑真实 HTTP server 冒烟）
+npm run test -w @flovven/web-client
+----
+
+当前 `test` 脚本由 `@flovven/web-client` 提供（`npm run build && node test/smoke.mjs`），
+覆盖路径参数、负载均衡、签名与响应验签；core 另有 `core/test/sign.e2e.test.mjs` 端到端验签用例。
+
+== 许可证
+
+待补充（License TBD）。

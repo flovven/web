@@ -5,6 +5,10 @@ node_modules/
 
 # 构建产物
 dist/
+build/
+lib/
+out/
+coverage/
 *.tsbuildinfo
 
 # 日志
@@ -21,3 +25,11 @@ pnpm-debug.log*
 .env
 .env.*
 *.pem
+
+# 本地临时调试产物
+temp/
+*.bak
+*.old
+core/test_diag.mjs
+core/test/diag.mjs
+core/test/*.check.mjs

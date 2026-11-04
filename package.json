@@ -1,8 +1,8 @@
 {
-  "name": "@gyre/web",
+  "name": "@flovven/web",
   "version": "0.1.0",
   "private": true,
-  "description": "gyre 统一 Web 框架垫片层：TypeScript 实现，适配 hono / fastify / elysia / koa2",
+  "description": "flovven 统一 Web 框架垫片层：TypeScript 实现，适配 hono / fastify / elysia / koa2",
   "type": "module",
   "workspaces": [
     "packages/*"
@@ -17,7 +17,11 @@
     "node": ">=18.0.0"
   },
   "devDependencies": {
-    "typescript": "^5.4.5",
-    "@types/node": "^20.12.7"
+    "@types/node": "^20.12.7",
+    "typescript": "^5.4.5"
+  },
+  "dependencies": {
+    "@sinclair/typebox": "^0.34.52",
+    "koa": "^2.16.4"
   }
 }

@@ -1,0 +1,153 @@
+= @flovven/web-client
+
+声明式 HTTP 客户端：Feign 风格接口代理、负载均衡、编解码与签名，配合
+link:https://github.com/flovven/discovery[@flovven/discovery] 做服务发现。
+对标 Go 版 bufgot/web/client 的 `feign` / `balancer` / `sign` 的 Node 生态实现。
+
+== 特性
+
+* 接口即契约：`createClient<T>(mappings)` 按方法名把 TypeScript 接口映射为 HTTP 调用
+* 双寻址模式：服务发现（`serviceName` + `discoverer`）或静态 `baseUrl`
+* 负载均衡可插拔：`RoundRobin` / `FirstBalancer` / `RandomBalancer` / `WeightedRandom`，或自定义 `{ pick(instances) }`
+* 可插拔编解码：`JSONCodec` / `TextCodec` / `BytesCodec`，或自定义 `Codec`
+* 传输中间件：`(req, next)` 链式拦截，内置请求签名与响应验签传输
+* 错误语义：非 2xx 抛 `HTTPError`（含 statusCode / headers / body），`decodeError` 可接管错误解码
+
+== 安装
+
+[source,bash]
+----
+npm i @flovven/web-client
+----
+
+`@flovven/discovery` 为可选 peer 依赖，不装时可用 `baseUrl` 直连模式。底层使用全局 `fetch`（Node 18+）。
+
+== 快速开始
+
+[source,ts]
+----
+import { createClient, createSignTransport } from '@flovven/web-client';
+
+interface User {
+  id: number;
+  name: string;
+}
+
+interface UserService {
+  get(req: { id: number }): Promise<User>;
+  create(req: { name: string }): Promise<User>;
+  del(req: { id: number }): Promise<{ data: void; meta: { statusCode: number } }>;
+}
+
+const users = createClient<UserService>({
+  serviceName: 'user-service',
+  discoverer: nacosDiscovery,          // @flovven/discovery 任意实现，鸭子类型即可
+  mappings: {
+    get: 'GET /api/users/{id}',
+    create: 'POST /api/users',
+    del: { method: 'DELETE', path: '/api/users/{id}', meta: true },
+  },
+  transport: createSignTransport({ app: 'my-app', method: 'hmac-sha256', salt: 's3cret' }),
+});
+
+await users.get({ id: 42 });        // GET /api/users/42
+await users.create({ name: 'a' });  // POST /api/users，整个入参为 body
+----
+
+== 配置项
+
+[options="header"]
+|===
+| 选项 | 说明
+
+| `serviceName` | 服务发现键，与 `baseUrl` 同时设置时发现结果优先
+| `discoverer` | 服务发现器：`@flovven/discovery` 实现或 `resolve(name)` 函数
+| `balancer` | 负载均衡器，默认 `RoundRobin`
+| `baseUrl` | 静态基地址，如 `http://localhost:8080`
+| `scheme` | 仅发现模式使用，`http`（默认）/ `https`
+| `mappings` | 方法名到 `"METHOD /path"` 或 `{ method, path, meta? }` 的映射（必填）
+| `codec` | 编解码器，默认 `JSONCodec`
+| `timeoutMs` | 全局请求超时，0 表示不设
+| `transport` | 传输中间件（签名 / 日志 / 重试等）
+| `decodeError` | 非 2xx 时的自定义错误解码器
+| `fetchFn` | 注入 fetch 实现，默认 `globalThis.fetch`
+| `now` | 时钟注入（签名测试用）
+|===
+
+=== mapping
+
+[options="header"]
+|===
+| 形态 | 行为
+
+| `"METHOD /path"` | 字符串快捷写法
+| `{ method, path, meta? }` | 对象写法，`meta: true` 时返回 `{ data, meta: { statusCode, status, headers } }`
+|===
+
+* `{name}` 占位符从入参对象取值（自动 URL 编码，未被占位符消费的字段不报错）
+* `GET` / `HEAD`：未被占位符消费的字段拼接为 query
+* 其他方法：整个入参作为请求体（由 codec 编码）
+
+=== balancer
+
+[options="header"]
+|===
+| 类 | 策略
+
+| `RoundRobin`（默认） | 轮询
+| `FirstBalancer` | 固定取第一个
+| `RandomBalancer` | 均匀随机
+| `WeightedRandom` | 按实例 `weight` 加权随机（缺省视为 1）
+|===
+
+也可传入自定义对象 `{ pick(instances): Instance }`。
+
+=== 签名
+
+[source,ts]
+----
+import { createClient, createSignTransport, createResponseVerifyTransport } from '@flovven/web-client';
+
+const sign = createSignTransport({ app: 'my-app', method: 'hmac-sha256', salt: 's3cret' });
+const verify = createResponseVerifyTransport({
+  app: 'my-app',
+  method: 'hmac-sha256',
+  salt: 's3cret',
+  throwOnInvalid: true,
+});
+
+const client = createClient({
+  baseUrl: 'http://svc:8080',
+  transport: chain(sign, verify),   // 自定义组合函数，逐层包裹 next
+  mappings: { ping: 'POST /ping' },
+});
+----
+
+签名载荷与服务端 `@flovven/web-core` 的 sign 中间件严格一致：
+
+[source,text]
+----
+payload(request)  = app + ts + nonce + UPPER(method) + path + base64(body)
+payload(response) = app + ts + nonce + statusCode + base64(body)
+----
+
+* 请求头：`x-req-app` / `x-req-timestamp` / `x-req-nonce` / `x-req-sign`
+* 响应头：`x-res-app` / `x-res-timestamp` / `x-res-nonce` / `x-res-sign`
+* 算法：`md5` / `hmac-sha256` / `ed25519`（ed25519 的 salt 传私钥 Buffer，验响应传公钥）
+
+=== transport 自定义
+
+`transport(req, next)` 为传输中间件，可在发请求前后拦截修改，支持多层叠加（签名、日志、重试、熔断等）。
+
+== 其他说明
+
+* 超时：全局 `timeoutMs`（0 不设），单次调用可用 `CallOptions.timeoutMs` 覆盖，`CallOptions.headers` / `signal` 同理
+* 错误：非 2xx 抛 `HTTPError`（含 statusCode / headers / body），可用 `decodeError` 自定义
+* 实例挑选失败（无可用实例）会抛错，不返回空结果
+
+== 测试
+
+[source,bash]
+----
+npm test   # 构建 + 起真实 HTTP server 跑冒烟（路径参数 / 负载均衡 / 签名 / 验签）
+----

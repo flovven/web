@@ -1,0 +1,37 @@
+{
+  "name": "@flovven/web-client",
+  "version": "0.1.0",
+  "description": "flovven 声明式 HTTP 客户端：Feign 风格接口代理 + 负载均衡 + 签名，配合 @flovven/discovery 做服务发现",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node test/smoke.mjs"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "peerDependencies": {
+    "@flovven/discovery": ">=0.1.0"
+  },
+  "peerDependenciesMeta": {
+    "@flovven/discovery": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5",
+    "@types/node": "^20.12.7"
+  }
+}

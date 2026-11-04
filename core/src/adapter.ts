@@ -1,8 +1,8 @@
 /**
- * 统一适配器接口 —— @gyre/web-core
+ * 统一适配器接口 —— @flovven/web-core
  *
  * WebAdapter 是垫片层的核心：每个 Web 框架（hono / fastify / elysia / koa2）
- * 对应一个独立适配包（@gyre/web-adapter-<framework>），实现本接口后将
+ * 对应一个独立适配包（@flovven/web-adapter-<framework>），实现本接口后将
  * 统一路由 / 中间件 / 上下文桥接到框架原生能力。
  */
 import type { WebContext } from './context.js';

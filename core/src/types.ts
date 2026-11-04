@@ -1,5 +1,5 @@
 /**
- * 基础类型定义 —— @gyre/web-core
+ * 基础类型定义 —— @flovven/web-core
  */
 
 /** 支持的 HTTP 方法，ALL 表示匹配任意方法 */

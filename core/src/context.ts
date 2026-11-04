@@ -1,5 +1,5 @@
 /**
- * 统一上下文 —— @gyre/web-core
+ * 统一上下文 —— @flovven/web-core
  *
  * WebContext 是垫片层面向业务代码的唯一上下文抽象：
  * 路由处理器与中间件通过它读写请求与响应，不感知底层框架差异。
@@ -15,6 +15,12 @@ export interface WebRequestLike {
   readonly query: QueryParams;
   readonly params: RouteParams;
   readonly body: () => Promise<unknown>;
+  /**
+   * 原始请求体文本（签名/校验等场景需要原始字节语义）。
+   * 由适配器能力决定：hono/elysia 原生支持，fastify 经 preParsing 预读，
+   * koa 依赖 koa-bodyparser 的 rawBody。能力缺失时返回 undefined。
+   */
+  readonly rawBody?: () => Promise<string | undefined>;
 }
 
 /** 统一响应视图 */

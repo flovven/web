@@ -1,5 +1,5 @@
 /**
- * 统一路由 —— @gyre/web-core
+ * 统一路由 —— @flovven/web-core
  */
 import type { WebContext } from './context.js';
 import type { WebMiddleware } from './middleware.js';

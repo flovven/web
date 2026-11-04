@@ -1,8 +1,7 @@
 {
-  "name": "@gyre/web-adapter-fastify",
+  "name": "@flovven/web-adapter-fastify",
   "version": "0.1.0",
-  "private": true,
-  "description": "gyre 统一 Web 垫片层 fastify 适配包",
+  "description": "flovven 统一 Web 垫片层 fastify 适配包",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -20,10 +19,10 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@gyre/web-core": "0.1.0"
+    "@flovven/web-core": "file:../../core"
   },
   "peerDependencies": {
-    "fastify": "^4.0.0"
+    "fastify": "^4"
   },
   "peerDependenciesMeta": {
     "fastify": {
@@ -31,7 +30,8 @@
     }
   },
   "devDependencies": {
+    "@types/node": "^20.12.7",
     "typescript": "^5.4.5",
-    "@types/node": "^20.12.7"
+    "fastify": "^4.0.0"
   }
 }
