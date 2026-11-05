@@ -15,8 +15,17 @@ export { parseMapping, applyPathParams, collectQuery, buildUrl, type MappingInpu
 export {
   createSignTransport,
   createResponseVerifyTransport,
+  createDynamicSignTransport,
+  createDynamicResponseVerifyTransport,
+  ClientSignStore,
+  createClientSignStore,
   signPayload,
   type ClientSignOptions,
+  type ClientSignConfig,
+  type ClientSignSnapshot,
+  type SignKey,
+  type SignConfigSource,
+  type SignConfigProvider,
   type ResponseVerifyOptions,
   type SignMethod,
 } from './sign.js';

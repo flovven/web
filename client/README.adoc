@@ -135,6 +135,47 @@ payload(response) = app + ts + nonce + statusCode + base64(body)
 * 响应头：`x-res-app` / `x-res-timestamp` / `x-res-nonce` / `x-res-sign`
 * 算法：`md5` / `hmac-sha256` / `ed25519`（ed25519 的 salt 传私钥 Buffer，验响应传公钥）
 
+=== 签名热更新与多 keyId
+
+服务端密钥轮换期间，客户端需要「新密钥签名 + 旧密钥验签」并存。用
+`createClientSignStore` 保存密钥集，并用 `createDynamicSignTransport` /
+`createDynamicResponseVerifyTransport` 替换静态传输：
+
+[source,ts]
+----
+import {
+  createClient,
+  createClientSignStore,
+  createDynamicSignTransport,
+  createDynamicResponseVerifyTransport,
+} from '@flovven/web-client';
+
+const signCfg = createClientSignStore({
+  app: 'my-app',
+  method: 'hmac-sha256',
+  salt: process.env.SIGN_SALT,
+  kid: 'k1',
+  graceSec: 300, // 保留上一代密钥 5 分钟用于验签服务端旧响应
+});
+
+const sign = createDynamicSignTransport({ keys: signCfg });
+const verify = createDynamicResponseVerifyTransport({ keys: signCfg, throwOnInvalid: true });
+
+const client = createClient({
+  baseUrl: 'http://svc:8080',
+  transport: chain(sign, verify),
+  mappings: { ping: 'POST /ping' },
+});
+
+// 与服务端同步轮换：新密钥立即用于签名，旧密钥进入宽限
+signCfg.rotate({ salt: process.env.SIGN_SALT_NEXT, kid: 'k2' });
+----
+
+* `store.update(next)` / `store.rotate(...)`：热替换或轮换密钥，`revision` 递增
+* `store.snapshot()` / `store.keys()` / `store.resolveKey(kid)` / `store.subscribe(fn)`：快照查询与变更订阅
+* 请求侧按当前主密钥签名并写 `x-req-kid`；响应侧按 `x-res-kid` 选密钥验签，宽限期内旧 `kid` 同样可验
+* `throwOnInvalid: true` 时未知 `kid` 抛 `sign: unknown key id`，为 `false` 时放行（仅告警语义）
+
 === transport 自定义
 
 `transport(req, next)` 为传输中间件，可在发请求前后拦截修改，支持多层叠加（签名、日志、重试、熔断等）。

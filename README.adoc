@@ -64,6 +64,8 @@ fastify 经 `preParsing` 预读，koa2 依赖 `koa-bodyparser` 的 `rawBody`；�
 | `signPayload` / `verifyPayload` | 底层签名与验签（常量时间比较），支持 `md5` / `hmac-sha256` / `ed25519`
 |===
 
+密钥支持运行时热替换与轮换期多密钥并存校验，详见 <<签名密钥热更新>>。
+
 签名载荷：
 
 [source,text]
@@ -93,6 +95,63 @@ app.get('/ping', async (ctx) => {
 });
 
 await app.listen({ port: 3000 });
+----
+
+== 签名密钥热更新
+
+签名密钥不再写死在中间件参数里：`verifySign` / `signResponse` 都支持通过 `keys`
+注入一个热更新来源（`SignConfigStore`、配置快照、同步/异步配置回调均可），
+运行时替换密钥无需重启进程，密钥轮换期支持新旧密钥并存校验。
+
+=== 服务端 API
+
+[options="header"]
+|===
+| 导出 | 说明
+
+| `createSignConfigStore(initial)` | 创建热更新存储，等价 `new SignConfigStore(initial)`
+| `store.update(next)` | 合并式热替换（`app` / `method` / `salt` / `kid` / `graceSec` / `grace` / `enabled`），返回新快照
+| `store.rotate({ method?, salt?, kid?, graceSec? })` | 密钥轮换快捷方式：新密钥立即生效，被替换的主密钥按 `graceSec` 进入宽限期
+| `store.load(source)` | 从 `SignConfigInput` / 快照 / 同步或异步回调 / 另一个 store 拉取并落地（适配配置中心推送）
+| `store.snapshot()` | 取当前不可变快照（读时快照语义）
+| `store.keys(now?)` | 当前可用密钥列表，主密钥在前、宽限旧密钥在后
+| `store.resolveKey(kid?, now?)` | 按 `kid` 选密钥（含宽限期校验），供自定义校验逻辑复用
+| `store.subscribe(fn)` | 订阅变更，返回退订函数
+| `store.close()` | 关闭订阅通知
+| `verifySign({ keys })` | 每个请求入口读取一次快照；`kidHeader`（默认 `x-req-kid`）、`tryGraceKeys`（默认 `true`）
+| `signResponse({ keys })` | 响应阶段读取快照签发，并回写 `x-res-kid`
+|===
+
+=== 热更新语义
+
+* *读时快照*：中间件在请求入口/响应阶段各读一次快照，进行中的请求全程使用同一份配置，热更新只影响后续请求
+* *多密钥并存*：轮换后被替换的主密钥按 `graceSec` 保留为宽限密钥，`grace` 可再追加历史密钥；请求带 `x-req-kid` 时按 `kid` 精确选密钥，未带时依次尝试主密钥与宽限密钥（`tryGraceKeys`）
+* *宽限到期即失效*：`expiresAt` 过期后该密钥从 `keys()` / `resolveKey()` 中消失，旧密钥请求返回 401 `unknown key id`
+* *可热关闭*：`update({ enabled: false })` 后跳过签发与验签（用于灰度或排障）
+
+[source,ts]
+----
+import { WebApp } from '@flovven/web-core';
+import { HonoAdapter } from '@flovven/web-adapter-hono';
+import { createSignConfigStore, verifySign, signResponse } from '@flovven/web-core';
+
+const signCfg = createSignConfigStore({
+  app: 'my-app',
+  method: 'hmac-sha256',
+  salt: process.env.SIGN_SALT,
+  kid: 'k1',
+  graceSec: 300, // 轮换后旧密钥保留 5 分钟宽限
+});
+
+const app = new WebApp(new HonoAdapter());
+app.use(verifySign({ keys: signCfg }));
+app.use(signResponse({ keys: signCfg }));
+
+// 密钥轮换：k2 立即生效，k1 在 300 秒宽限内仍可验签
+signCfg.rotate({ salt: process.env.SIGN_SALT_NEXT, kid: 'k2' });
+
+// 也可对接配置中心推送（支持异步回调）
+await signCfg.load(async () => await fetchSignConfigFromConfigCenter());
 ----
 
 == 声明式客户端
@@ -149,7 +208,7 @@ await app.listen({ port: 3000, onListen: ({ port }) => console.log(`listening on
 npm install          # 安装全部工作区依赖
 npm run build        # npm run build --workspaces --if-present
 npm run typecheck    # tsc -b --pretty false
-npm run test         # npm run test --workspaces --if-present
+npm run test         # core（node --test）+ client（构建后冒烟）+ 各工作区脚本
 npm run clean        # 清理各包 dist/
 ----
 
@@ -161,12 +220,17 @@ npm run clean        # 清理各包 dist/
 npm run build -w @flovven/web-core
 npm run typecheck -w @flovven/web-core
 
+# core：构建后跑 node --test（sign 端到端 + 签名热更新）
+npm --prefix core test
+
 # client：build、typecheck、test（构建后跑真实 HTTP server 冒烟）
 npm run test -w @flovven/web-client
 ----
 
-当前 `test` 脚本由 `@flovven/web-client` 提供（`npm run build && node test/smoke.mjs`），
-覆盖路径参数、负载均衡、签名与响应验签；core 另有 `core/test/sign.e2e.test.mjs` 端到端验签用例。
+`core` 的 `npm test` 会先 `tsc -p tsconfig.json` 再执行 `node --test test/*.test.mjs`，
+包含 `test/sign.e2e.test.mjs`（sign 全链路）与 `test/sign-hot.test.mjs`
+（密钥热替换、多密钥宽限、轮换后旧密钥失效、动态增删与响应 `kid` 选择）；
+`client` 的 `test` 为构建后真实 HTTP server 冒烟。
 
 == 许可证
 

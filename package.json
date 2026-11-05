@@ -11,7 +11,7 @@
     "build": "npm run build --workspaces --if-present",
     "typecheck": "tsc -b --pretty false",
     "clean": "node -e \"require('fs').rmSync('packages/core/dist',{recursive:true,force:true}); ['adapter-hono','adapter-fastify','adapter-elysia','adapter-koa'].forEach(n=>require('fs').rmSync('packages/'+n+'/dist',{recursive:true,force:true}))\"",
-    "test": "npm run test --workspaces --if-present"
+    "test": "npm --prefix core test && npm --prefix client test && npm run test --workspaces --if-present"
   },
   "engines": {
     "node": ">=18.0.0"
